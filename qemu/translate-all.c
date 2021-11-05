@@ -242,12 +242,12 @@ static int cpu_gen_code(CPUArchState *env, TranslationBlock *tb, int *gen_code_s
     if (gen_code_size == -1) {
         return -1;
     }
-    //printf(">>> code size = %u: ", gen_code_size);
-    //int i;
-    //for (i = 0; i < gen_code_size; i++) {
-    //    printf(" %02x", gen_code_buf[i]);
-    //}
-    //printf("\n");
+    printf(">>> code size = %u: ", gen_code_size);
+    int i;
+    for (i = 0; i < gen_code_size; i++) {
+       printf(" %02x", gen_code_buf[i]);
+    }
+    printf("\n");
     *gen_code_size_ptr = gen_code_size;
 #ifdef CONFIG_PROFILER
     s->code_time += profile_getclock();
@@ -1135,6 +1135,7 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
     int code_gen_size;
     int ret;
 
+    // phys_pc = get_page_addr_code(env, pc);
     phys_pc = get_page_addr_code(env, pc);
     tb = tb_alloc(env->uc, pc);
     if (!tb) {
@@ -1490,7 +1491,9 @@ static void tb_link_page(struct uc_struct *uc,
     *ptb = tb;
 
     /* add in the page list */
-    tb_alloc_page(uc, tb, 0, phys_pc & TARGET_PAGE_MASK);
+    if(phys_pc != -1) {
+        tb_alloc_page(uc, tb, 0, phys_pc & TARGET_PAGE_MASK);
+    }
     if (phys_page2 != -1) {
         tb_alloc_page(uc, tb, 1, phys_page2);
     } else {

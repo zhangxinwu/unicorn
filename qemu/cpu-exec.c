@@ -97,7 +97,7 @@ int cpu_exec(struct uc_struct *uc, CPUArchState *env)   // qq
 
             /* if an exception is pending, we execute it here */
             if (cpu->exception_index >= 0) {
-                //printf(">>> GOT INTERRUPT. exception idx = %x\n", cpu->exception_index);	// qq
+                printf(">>> GOT INTERRUPT. exception idx = %x\n", cpu->exception_index);	// qq
                 if (cpu->exception_index >= EXCP_INTERRUPT) {
                     /* exit request from the cpu execution loop */
                     ret = cpu->exception_index;
@@ -379,7 +379,8 @@ static TranslationBlock *tb_find_slow(CPUArchState *env, target_ulong pc,
     tcg_ctx->tb_ctx.tb_invalidated_flag = 0;
 
     /* find translated block using physical mappings */
-    phys_pc = get_page_addr_code(env, pc);  // qq
+    // phys_pc = get_page_addr_code(env, pc);  // qq
+    phys_pc = pc;
     if (phys_pc == -1) { // invalid code?
         return NULL;
     }

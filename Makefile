@@ -159,10 +159,10 @@ AR ?= ar
 RANLIB ?= ranlib
 STRIP ?= strip
 else
-CC = $(CROSS)-gcc
-AR = $(CROSS)-ar
-RANLIB = $(CROSS)-ranlib
-STRIP = $(CROSS)-strip
+CC = aarch64-linux-android32-clang
+AR = llvm-ar
+RANLIB = llvm-ranlib
+STRIP = llvm-strip
 endif
 
 ifeq ($(PKG_EXTRA),)

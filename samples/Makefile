@@ -93,7 +93,7 @@ endif
 BINS = $(SOURCES:.c=$(BIN_EXT))
 OBJS = $(SOURCES:.c=.o)
 
-all: $(BINS)
+all:
 
 $(BINS): $(OBJS)
 

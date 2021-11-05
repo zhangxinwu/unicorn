@@ -120,7 +120,7 @@ fi
 export CC INSTALL_BIN PREFIX PKGCFGDIR LIBDIRARCH LIBARCHS CFLAGS LDFLAGS
 
 case "$1" in
-  "" ) ${MAKE};;
+  "" ) ${MAKE} -j8;;
   "asan" ) asan;;
   "install" ) install;;
   "uninstall" ) uninstall;;

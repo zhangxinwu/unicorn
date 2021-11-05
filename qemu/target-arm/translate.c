@@ -11324,7 +11324,8 @@ static inline void gen_intermediate_code_internal(ARMCPU *cpu,
         store_cpu_field(tcg_ctx, tmp, condexec_bits);
       }
     do {
-        //printf(">>> arm pc = %x\n", dc->pc);
+        printf(">>> arm pc = %x\n", dc->pc);
+        tcg_dump_ops(tcg_ctx);
 #ifdef CONFIG_USER_ONLY
         /* Intercept jump to the magic kernel page.  */
         if (dc->pc >= 0xffff0000) {
