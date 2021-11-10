@@ -1,11 +1,14 @@
-CC ?= armv7a-linux-androideabi32-clang
 CC = cc
-CXX_FLAG ?= -g -I../include  -lpthread -lm
+CXX_FLAG = -g -I../include  -lm 
 
-a.out: *.cpp ../libunicorn.a
-	${CC} $^ ${CXX_FLAG}
+all: main.cpp ../libb/libunicorn.a
+	${CC} $^ ${CXX_FLAG} -lpthread
 
-all: a.out
+arm64: main.cpp ../lib64/libunicorn.a
+	aarch64-linux-android32-clang $^ ${CXX_FLAG}
+
+arm: main.cpp ../lib32/libunicorn.a
+	armv7a-linux-androideabi32-clang $^ ${CXX_FLAG}
 
 clean:
 	$(shell rm a.out)

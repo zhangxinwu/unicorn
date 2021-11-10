@@ -102,3 +102,5 @@ build/
 packages/
 cmocka/
 .history
+a.out*
+a.out

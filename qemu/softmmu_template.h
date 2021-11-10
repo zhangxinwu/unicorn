@@ -195,7 +195,7 @@ WORD_TYPE helper_le_ld_name(CPUArchState *env, target_ulong addr, int mmu_idx,
 
     struct uc_struct *uc = env->uc;
     MemoryRegion *mr = memory_mapping(uc, addr);
-
+#if 0
     // memory might be still unmapped while reading or fetching
     if (mr == NULL) {
         handled = false;
@@ -402,8 +402,9 @@ WORD_TYPE helper_le_ld_name(CPUArchState *env, target_ulong addr, int mmu_idx,
         return 0;
     }
 #endif
-
-    haddr = (uintptr_t)(addr + env->tlb_table[mmu_idx][index].addend);
+#endif
+    // haddr = (uintptr_t)(addr + env->tlb_table[mmu_idx][index].addend);
+    haddr = addr;
 #if DATA_SIZE == 1
     res = glue(glue(ld, LSUFFIX), _p)((uint8_t *)haddr);
 #else
@@ -445,7 +446,7 @@ WORD_TYPE helper_be_ld_name(CPUArchState *env, target_ulong addr, int mmu_idx,
 
     struct uc_struct *uc = env->uc;
     MemoryRegion *mr = memory_mapping(uc, addr);
-
+#if 0
     // memory can be unmapped while reading or fetching
     if (mr == NULL) {
         handled = false;
@@ -651,8 +652,9 @@ WORD_TYPE helper_be_ld_name(CPUArchState *env, target_ulong addr, int mmu_idx,
         return 0;
     }
 #endif
-
-    haddr = (uintptr_t)(addr + env->tlb_table[mmu_idx][index].addend);
+#endif
+    // haddr = (uintptr_t)(addr + env->tlb_table[mmu_idx][index].addend);
+    haddr = addr;
     res = glue(glue(ld, LSUFFIX), _be_p)((uint8_t *)haddr);
 
 _out:
@@ -743,7 +745,7 @@ void helper_le_st_name(CPUArchState *env, target_ulong addr, DATA_TYPE val,
             ((uc_cb_hookmem_t)hook->callback)(uc, UC_MEM_WRITE, addr, DATA_SIZE, val, hook->user_data);
         }
     }
-
+#if 0
     // Unicorn: callback on invalid memory
     if (mr == NULL) {
         handled = false;
@@ -880,8 +882,9 @@ void helper_le_st_name(CPUArchState *env, target_ulong addr, DATA_TYPE val,
         return;
     }
 #endif
-
-    haddr = (uintptr_t)(addr + env->tlb_table[mmu_idx][index].addend);
+#endif
+    // haddr = (uintptr_t)(addr + env->tlb_table[mmu_idx][index].addend);
+    haddr = addr;
 #if DATA_SIZE == 1
     glue(glue(st, SUFFIX), _p)((uint8_t *)haddr, val);
 #else
@@ -913,7 +916,7 @@ void helper_be_st_name(CPUArchState *env, target_ulong addr, DATA_TYPE val,
             ((uc_cb_hookmem_t)hook->callback)(uc, UC_MEM_WRITE, addr, DATA_SIZE, val, hook->user_data);
         }
     }
-
+#if 0
     // Unicorn: callback on invalid memory
     if (mr == NULL) {
         handled = false;
@@ -1050,8 +1053,9 @@ void helper_be_st_name(CPUArchState *env, target_ulong addr, DATA_TYPE val,
         return;
     }
 #endif
-
-    haddr = (uintptr_t)(addr + env->tlb_table[mmu_idx][index].addend);
+#endif
+    // haddr = (uintptr_t)(addr + env->tlb_table[mmu_idx][index].addend);
+    haddr = addr;
     glue(glue(st, SUFFIX), _be_p)((uint8_t *)haddr, val);
 }
 #endif /* DATA_SIZE > 1 */

@@ -29,9 +29,30 @@ C0 03 5F D6 RET
 // \xFF\x43\x00\xD1\xE0\x0F\x00\xB9\xE1\x0B\x00\xB9\xE8\x0F\x40\xB9\xE9\x0B\x40\xB9\x00\x01\x09\x0B\xFF\x43\x00\x91
 #define ARM_SUM "\xFF\x43\x00\xD1\xE0\x0F\x00\xB9\xE1\x0B\x00\xB9\xE8\x0F\x40\xB9\xE9\x0B\x40\xB9\x00\x01\x09\x0B\xFF\x43\x00\x91\xC0\x03\x5F\xD6"
 // #define ARM_SUM "\xFF\x43\x00\xD1\x08\x00\x8D\xE5\xE1\x0B\x00\xB9\xE8\x0F\x40\xB9"
+
+static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *user_data)
+{
+    printf(">>> Tracing basic block at %p, block size = 0x%x\n", address, size);
+}
+
+static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user_data)
+{
+    printf(">>> Tracing instruction at %p, instruction size = 0x%x  %p\n", address, size, *(uint32_t *)address);
+}
+
+int arr[2] = {0, 0};
+int add(int a, int b)
+{
+    for (int i = 0; i < a; i++)
+        b += 1;
+    return b;
+}
+
 int sum(int a, int b, int c)
 {
-    return 0x1111;
+    arr[0] = add(c, add(a, b));
+    arr[1] = strlen("a324nmcdsmdkcdscmdskmd");
+    return arr[0];
 }
 
 static void test_arm(void)
@@ -40,38 +61,50 @@ static void test_arm(void)
     uc_err err;
     uc_hook trace1, trace2;
 
-    int64_t r0 = 0x1234;     // R0 register
-    int64_t r1 = 0x2222;     // R1 register
-    int64_t r2 = 0x6789;     // R1 register
-    int64_t r3 = 0x3333;     // R2 register
-    int64_t stack[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}; 
+    int64_t r0 = 0x1234; // R0 register
+    int64_t r1 = 0x2222; // R1 register
+    int64_t r2 = 0x1111; // R1 register
+    int64_t r3 = 0x3333; // R2 register
+    int64_t stack[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
     printf("Emulate ARM code\n");
 
     // Initialize emulator in ARM mode
     err = uc_open(UC_ARCH_ARM64, UC_MODE_ARM, &uc);
-    if (err) {
+    if (err)
+    {
         printf("Failed on uc_open() with error returned: %u (%s)\n",
-                err, uc_strerror(err));
+               err, uc_strerror(err));
         return;
     }
     uc_reg_write(uc, UC_ARM64_REG_W0, &r0);
     uc_reg_write(uc, UC_ARM64_REG_W1, &r1);
     uc_reg_write(uc, UC_ARM64_REG_W2, &r2);
     uc_reg_write(uc, UC_ARM64_REG_W3, &r3);
-    void* st = (void*)&stack[8];
+    void *st = (void *)&stack[8];
+    printf("stack: %p\n", st);
     uc_reg_write(uc, UC_ARM64_REG_SP, &st);
+
+    int64_t lr = -1;
+    uc_reg_write(uc, UC_ARM64_REG_LR, &lr);
+
+    // tracing all basic blocks with customized callback
+    uc_hook_add(uc, &trace1, UC_HOOK_BLOCK, (void *)hook_block, NULL, (uint64_t)sum, (uint64_t)sum + 0xfff);
+
+    // tracing one instruction at ADDRESS with customized callback
+    uc_hook_add(uc, &trace2, UC_HOOK_CODE, (void *)hook_code, NULL, 1, 0);
 
     // emulate machine code in infinite time (last param = 0), or when
     // finishing all the code.
-    err = uc_emu_start(uc, (uint64_t)ARM_SUM, ((uint64_t)ARM_SUM)+sizeof(ARM_SUM)-1, 0, 0);
-    if (err) {
+    err = uc_emu_start(uc, (uint64_t)ARM_SUM, -1, 0, 0);
+    if (err)
+    {
         printf("Failed on uc_emu_start() with error returned: %u\n", err);
     }
 
     // now print out some registers
     printf(">>> Emulation done. Below is the CPU context\n");
 
-    int64_t sp, r8,r9;
+    int64_t sp, r8, r9;
     uc_reg_read(uc, UC_ARM64_REG_W0, &r0);
     uc_reg_read(uc, UC_ARM64_REG_W1, &r1);
     uc_reg_read(uc, UC_ARM64_REG_W8, &r8);
@@ -83,10 +116,9 @@ static void test_arm(void)
     printf(">>> R9 = %p\n", r9);
     printf(">>> sp = %p\n", sp);
     printf(">>> stack = %p\n", st);
-    for (int i =0; i < 16; i++)
-        printf("%d:%d, ", i, stack[i]);
+    for (int i = 0; i < 16; i++)
+        printf("%d:%p, ", i, stack[i]);
     printf("\n");
-
 
     uc_close(uc);
 }
@@ -94,6 +126,8 @@ static void test_arm(void)
 int main(int argc, char **argv, char **envp)
 {
     test_arm();
+    printf("result: arr[0] %p\n", arr[0]);
+    printf("result: arr[1] %p\n", arr[1]);
     return 0;
 }
 // 0xfffed9dc
