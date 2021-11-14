@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <cmath>
+#include <pthread.h>
 
 using namespace std;
 
@@ -37,7 +38,11 @@ static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *use
 
 static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user_data)
 {
-    printf(">>> Tracing instruction at %p, instruction size = 0x%x  %p\n", address, size, *(uint32_t *)address);
+
+    printf(">>> Tracing instruction at %p, instruction size = 0x%x \n", address, size);
+    for (int i = 0 ; i < 4; i++)
+        printf("%02x ", ((uint8_t *)address)[i]);
+    printf("\n");
 }
 
 struct SvcCall
@@ -53,61 +58,56 @@ struct SvcCall
 static void hook_intr(uc_engine *uc, uint32_t intno, void *user_data) {
     printf(">>> Tracing intr %x\n", intno);
     uint8_t inst[4];
-    uint64_t pc;
+    uint8_t* pc;
     uc_reg_read(uc, UC_ARM64_REG_PC, &pc);
 
-    uc_mem_read(uc, pc, inst, 4);
-    printf(">>> Tracing intr->pc %x %x %x %x\n", inst[0], inst[1], inst[2], inst[3]);
+    printf(">>> Tracing intr->pc %x %x %x %x\n", pc[0], pc[1], pc[2], pc[3]);
     
     uc_err err;
 	// Just grab a bunch of registers here so we don't have to make a bunch of calls
 	// Being lazy =)
-	uint64_t x0 = 0, x1 = 0, x2 = 0, x3 = 0, x4 = 0, x5 = 0, x6 = 0, x7 = 0;
     uint64_t lr = -1;
     uc_reg_read(uc, UC_ARM64_REG_LR, &lr);
 
-    err = uc_reg_read(uc, UC_ARM64_REG_X0, &x0); if (err != UC_ERR_OK) { return; }
-	err = uc_reg_read(uc, UC_ARM64_REG_X1, &x1); if (err != UC_ERR_OK) { return; }
-	err = uc_reg_read(uc, UC_ARM64_REG_X2, &x2); if (err != UC_ERR_OK) { return; }
-	err = uc_reg_read(uc, UC_ARM64_REG_X3, &x3); if (err != UC_ERR_OK) { return; }
-	err = uc_reg_read(uc, UC_ARM64_REG_X4, &x4); if (err != UC_ERR_OK) { return; }
-	err = uc_reg_read(uc, UC_ARM64_REG_X5, &x5); if (err != UC_ERR_OK) { return; }
-	err = uc_reg_read(uc, UC_ARM64_REG_X6, &x6); if (err != UC_ERR_OK) { return; }
-	err = uc_reg_read(uc, UC_ARM64_REG_X7, &x7); if (err != UC_ERR_OK) { return; }
+    uint64_t regs[8];
+    err = uc_reg_read(uc, UC_ARM64_REG_X0, &regs[0]); if (err != UC_ERR_OK) { return; }
+	err = uc_reg_read(uc, UC_ARM64_REG_X1, &regs[1]); if (err != UC_ERR_OK) { return; }
+	err = uc_reg_read(uc, UC_ARM64_REG_X2, &regs[2]); if (err != UC_ERR_OK) { return; }
+	err = uc_reg_read(uc, UC_ARM64_REG_X3, &regs[3]); if (err != UC_ERR_OK) { return; }
+	err = uc_reg_read(uc, UC_ARM64_REG_X4, &regs[4]); if (err != UC_ERR_OK) { return; }
+	err = uc_reg_read(uc, UC_ARM64_REG_X5, &regs[5]); if (err != UC_ERR_OK) { return; }
+	err = uc_reg_read(uc, UC_ARM64_REG_X8, &regs[6]); if (err != UC_ERR_OK) { return; }
 
-    #define SVC_CALL(svc_num) \
-        asm volatile ("ldr x0, %0" ::"m"(x0):);\
-        asm volatile ("ldr x1, %0" ::"m"(x1):);\
-        asm volatile ("ldr x2, %0" ::"m"(x2):);\
-        asm volatile ("ldr x3, %0" ::"m"(x3):);\
-        asm volatile ("ldr x4, %0" ::"m"(x4):);\
-        asm volatile ("ldr x5, %0" ::"m"(x5):);\
-        asm volatile ("ldr x6, %0" ::"m"(x6):);\
-        asm volatile ("ldr x7, %0" ::"m"(x7):);\
-        asm volatile ("svc #"#svc_num"":::);\
-        asm volatile ("str x0, %0" ::"m"(x0):);\
-        asm volatile ("str x1, %0" ::"m"(x1):);\
-        asm volatile ("str x2, %0" ::"m"(x2):);\
-        asm volatile ("str x3, %0" ::"m"(x3):);\
-        asm volatile ("str x4, %0" ::"m"(x4):);\
-        asm volatile ("str x5, %0" ::"m"(x5):);\
-        asm volatile ("str x6, %0" ::"m"(x6):);\
-        asm volatile ("str x7, %0" ::"m"(x7):);\
-
-    if (intno == 0) { SVC_CALL(0);}
-    if (intno == 1) { SVC_CALL(1);}
-	#undef SVC_CALL
-
-	err = uc_reg_write(uc, UC_ARM64_REG_X0, &x0); if (err != UC_ERR_OK) { return; }
-	err = uc_reg_write(uc, UC_ARM64_REG_X1, &x1); if (err != UC_ERR_OK) { return; }
-	err = uc_reg_write(uc, UC_ARM64_REG_X2, &x2); if (err != UC_ERR_OK) { return; }
-	err = uc_reg_write(uc, UC_ARM64_REG_X3, &x3); if (err != UC_ERR_OK) { return; }
-	err = uc_reg_write(uc, UC_ARM64_REG_X4, &x4); if (err != UC_ERR_OK) { return; }
-	err = uc_reg_write(uc, UC_ARM64_REG_X5, &x5); if (err != UC_ERR_OK) { return; }
-	err = uc_reg_write(uc, UC_ARM64_REG_X6, &x6); if (err != UC_ERR_OK) { return; }
-	err = uc_reg_write(uc, UC_ARM64_REG_X7, &x7); if (err != UC_ERR_OK) { return; }
-    
-    uc_reg_write(uc, UC_ARM64_REG_PC, &lr);
+    uint64_t oregs[8];
+    asm volatile (
+        "str x0, [%0, #0x00]""\n\t"
+        "str x1, [%0, #0x08]""\n\t"
+        "str x2, [%0, #0x10]""\n\t"
+        "str x3, [%0, #0x18]""\n\t"
+        "str x4, [%0, #0x20]""\n\t"
+        "str x5, [%0, #0x28]""\n\t"
+        "str x6, [%0, #0x30]""\n\t"
+        "str x8, [%0, #0x38]""\n\t"
+        "mov x6, %1""\n\t"
+        "ldr x0, [x6, #0x00]""\n\t"
+        "ldr x1, [x6, #0x08]""\n\t"
+        "ldr x2, [x6, #0x10]""\n\t"
+        "ldr x3, [x6, #0x18]""\n\t"
+        "ldr x4, [x6, #0x20]""\n\t"
+        "ldr x5, [x6, #0x28]""\n\t"
+        "ldr x8, [x6, #0x30]""\n\t"
+        "svc #0""\n\t"
+        "str x0, [x6, #0x00]""\n\t"
+        "ldr x0, [%2, #0x00]""\n\t"
+        "ldr x1, [%2, #0x08]""\n\t"
+        "ldr x2, [%2, #0x10]""\n\t"
+        "ldr x3, [%2, #0x18]""\n\t"
+        "ldr x4, [%2, #0x20]""\n\t"
+        "ldr x5, [%2, #0x28]""\n\t"
+        "ldr x6, [%2, #0x30]""\n\t"
+        "ldr x8, [%2, #0x38]""\n\t"
+        ::"r"(oregs),"r"(regs),"r"(oregs));
+	err = uc_reg_write(uc, UC_ARM64_REG_X0, &regs[0]); if (err != UC_ERR_OK) { return; }
 }
 
 int arr[2] = {0, 0};
@@ -151,13 +151,43 @@ E0 07 40 F9 LDR             X0, [SP,#0x10+stream] ; stream
 #define OPENFILE "\xFF\x03\x01\xD1\xFD\x7B\x03\xA9\xFD\xC3\x00\x91\xBF\x83\x1F\xF8\xA0\x47\x00\xD1\xE0\x07\x00\xF9\x88\x0E\x80\x52\xA8\xF3\x1E\x38\xA9\x0C\x80\x52\xA9\x03\x1F\x38\x69\x0E\x80\x52\xA9\x13\x1F\x38\xA8\x23\x1F\x38\xC9\x05\x80\x52\xA9\x33\x1F\x38\xA8\x43\x1F\x38\x09\x0F\x80\x52\xA9\x53\x1F\x38\xA8\x63\x1F\x38\xBF\x73\x1F\x38\xA1\x53\x00\xD1\xE1\x0B\x00\xF9\xE8\x0E\x80\x52\xA8\xC3\x1E\x38\x68\x05\x80\x52\xA8\xD3\x1E\x38\xBF\xE3\x1E\x38\x2B\x00\x00\x94\xE1\x07\x40\xF9\xA0\x83\x1F\xF8\xA0\x83\x5F\xF8\x2B\x00\x00\x94\xE0\x0B\x40\xF9\xA1\x83\x5F\xF8\x2C\x00\x00\x94\xA0\x83\x5F\xF8\x2E\x00\x00\x94\x20\x00\x20\xD4"
 int openfile()
 {
+    // asm("svc #0":::);
+    // asm("stp q1, q2, [x0]");
+
     FILE *fp = NULL;
-    char filename[] = "test.txt\0";
-    char fileopt[] = "w+\0";
-    fp = fopen(filename, fileopt);
-    fprintf(fp, filename);
-    fputs(fileopt, fp);
+    fp = fopen("test.txt", "w+");
+    fprintf(fp, "ok!!!");
+    fputs("hello world!", fp);
     fclose(fp);
+    return 0;
+}
+
+void print_message_function( void *ptr ) {
+    int i = 0;
+    for (i; i<5; i++) {
+        printf("%s:%d\n", (char *)ptr, i);
+    }
+}
+
+int newthread()
+{
+    pthread_t thread;
+    char* threadstr = "thead1";
+    int err = pthread_create(&thread, NULL, (void *(*)(void *))&print_message_function, threadstr);
+    if(err != 0)
+    {
+        printf("create thread error %d\n", err);
+        return -1;
+    }
+    void* ret;
+    err = pthread_join(thread, &ret);
+    if(err != 0)
+    {
+        printf("join thread error %d\n", err);
+        return -1;
+    }
+    printf("thread ok!\n");
+    return 0;
 }
 
 // extern void run();
@@ -175,11 +205,19 @@ static void test_arm(void)
     uc_err err;
     uc_hook trace1, trace2;
 
+    uint64_t tpidr_el0=0;
+    asm("mrs  x18, tpidr_el0\n\tstr x18, %0"::"m"(tpidr_el0):);
+
+    uint64_t CPACR_FPEN_MASK = (0x3 << 20);
+    uint64_t CPACR_FPEN_TRAP_NONE = (0x3 << 20);
+
+    uint64_t cpacr_el1 = 0;
+
     int64_t r0 = 0x1234; // R0 register
     int64_t r1 = 0x2222; // R1 register
     int64_t r2 = 0x1111; // R1 register
     int64_t r3 = 0x3333; // R2 register
-    int64_t stack[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    int8_t *stack = (int8_t*)malloc(0x2000);
     printf("Emulate ARM code\n");
 
     // Initialize emulator in ARM mode
@@ -194,7 +232,12 @@ static void test_arm(void)
     uc_reg_write(uc, UC_ARM64_REG_W1, &r1);
     uc_reg_write(uc, UC_ARM64_REG_W2, &r2);
     uc_reg_write(uc, UC_ARM64_REG_W3, &r3);
-    void *st = (void *)&stack[8];
+    uc_reg_write(uc, UC_ARM64_REG_TPIDR_EL0, &tpidr_el0);
+    
+    uc_reg_read(uc, UC_ARM64_REG_CPACR_EL1, &cpacr_el1);
+    cpacr_el1 = (cpacr_el1 & ~CPACR_FPEN_MASK) | CPACR_FPEN_TRAP_NONE;
+    uc_reg_write(uc, UC_ARM64_REG_CPACR_EL1, &cpacr_el1);
+    void *st = ((uint64_t *)&stack[0x2000]) - 1;
     printf("stack: %p\n", st);
     uc_reg_write(uc, UC_ARM64_REG_SP, &st);
 
@@ -212,13 +255,13 @@ static void test_arm(void)
 
     // emulate machine code in infinite time (last param = 0), or when
     // finishing all the code.
-    err = uc_emu_start(uc, (uint64_t)OPENFILE, -1, 0, 0);
+    err = uc_emu_start(uc, (uint64_t)newthread, -1, 0, 0);
     if (err)
     {
         printf("Failed on uc_emu_start() with error returned: %u\n", err);
     }
     err = uc_errno(uc);
-    printf("uc_errno: %d err: %s\n",uc_strerror(err));;
+    printf("uc_errno: %d err: %s\n",err, uc_strerror(err));;
 
     // now print out some registers
     printf(">>> Emulation done. Below is the CPU context\n");
