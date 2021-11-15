@@ -29,14 +29,15 @@ extern "C" void create_new_unicorn(register uint64_t fn, register uint64_t arg, 
     uc_reg_write(uc, UC_ARM64_REG_X0, &fn);
     uc_reg_write(uc, UC_ARM64_REG_X1, &arg);
 
-    err = uc_emu_start(uc, pc, -1, 0, 0);
+    err = uc_emu_start(uc, pc+32, -1, 0, 0);
     if (err)
     {
         printf("Failed on uc_emu_start() with error returned: %u\n", err);
     }
     err = uc_errno(uc);
     printf("uc_errno: %d err:\n", err);
-    pthread_exit((void*)"ok");
+    char* ret = "ok";
+    pthread_exit((void*)ret);
 }
 
 
@@ -134,15 +135,15 @@ static void hook_intr(uc_engine *uc, uint32_t intno, void *user_data) {
         "ldr x7, [%1, #0x38]""\n\t"
         "ldr x8, [%1, #0x40]""\n\t"
         "svc #0""\n\t"
-        "cbnz x0, main_thread""\n\t"
+        "str x0, [%1, #0x00]""\n\t"
+        "cbnz x0, not_should_jmp""\n\t"
         "sub x0, x8, #0xdc""\n\t" 
-        "cbnz x0, main_thread""\n\t"
+        "cbnz x0, not_should_jmp""\n\t"
         "mov x0, x5""\n\t"
         "mov x1, x6""\n\t"
         "mov x2, %2""\n\t"
         "b create_new_unicorn""\n\t"
-        "main_thread:""\n\t"
-        "str x0, [%1, #0x00]""\n\t"
+        "not_should_jmp:""\n\t"
         "ldr x0, [%0, #0x00]""\n\t"
         "ldr x1, [%0, #0x08]""\n\t"
         "ldr x2, [%0, #0x10]""\n\t"
