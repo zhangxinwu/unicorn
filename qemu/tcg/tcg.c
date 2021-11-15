@@ -2278,7 +2278,7 @@ static void tcg_reg_alloc_op(TCGContext *s,
     }
 
     if (def->flags & TCG_OPF_BB_END) {
-        tcg_reg_alloc_bb_end(s, allocated_regs);
+       // tcg_reg_alloc_bb_end(s, allocated_regs);
     } else {
         if (def->flags & TCG_OPF_CALL_CLOBBER) {
             /* XXX: permit generic clobber register list ? */

@@ -3,10 +3,42 @@
 #include <string.h>
 #include <cmath>
 #include <pthread.h>
+#include <errno.h>
 
 using namespace std;
 
 #define ARM_CODE "\x00\x37\x00\xa0\xe3\x03\x10\x42\xe0" // mov r0, #0x37; sub r1, r2, r3
+
+extern "C" void create_new_unicorn(register uint64_t fn, register uint64_t arg, register uint64_t pc)
+{
+    uc_engine *uc;
+    int err = uc_open(UC_ARCH_ARM64, UC_MODE_ARM, &uc);
+
+    int8_t *stack = (int8_t*)malloc(0x2000);
+    void *st = ((uint64_t *)&stack[0x2000]) - 1;
+    uc_reg_write(uc, UC_ARM64_REG_SP, &st);
+    uint64_t tpidr_el0=0, cpacr_el1=0;
+    asm("mrs  x18, tpidr_el0\n\tstr x18, %0"::"m"(tpidr_el0):);
+    uc_reg_write(uc, UC_ARM64_REG_TPIDR_EL0, &tpidr_el0);
+    uc_reg_read(uc, UC_ARM64_REG_CPACR_EL1, &cpacr_el1);
+    uint64_t CPACR_FPEN_MASK = (0x3 << 20);
+    uint64_t CPACR_FPEN_TRAP_NONE = (0x3 << 20);
+    cpacr_el1 = (cpacr_el1 & ~CPACR_FPEN_MASK) | CPACR_FPEN_TRAP_NONE;
+    uc_reg_write(uc, UC_ARM64_REG_CPACR_EL1, &cpacr_el1);
+
+    uc_reg_write(uc, UC_ARM64_REG_X0, &fn);
+    uc_reg_write(uc, UC_ARM64_REG_X1, &arg);
+
+    err = uc_emu_start(uc, pc, -1, 0, 0);
+    if (err)
+    {
+        printf("Failed on uc_emu_start() with error returned: %u\n", err);
+    }
+    err = uc_errno(uc);
+    printf("uc_errno: %d err:\n", err);
+    pthread_exit((void*)"ok");
+}
+
 
 /*arm
 .text:00064590 0C D0 4D E2                 SUB             SP, SP, #0xC
@@ -69,16 +101,19 @@ static void hook_intr(uc_engine *uc, uint32_t intno, void *user_data) {
     uint64_t lr = -1;
     uc_reg_read(uc, UC_ARM64_REG_LR, &lr);
 
-    uint64_t regs[8];
+    uint64_t regs[9];
     err = uc_reg_read(uc, UC_ARM64_REG_X0, &regs[0]); if (err != UC_ERR_OK) { return; }
 	err = uc_reg_read(uc, UC_ARM64_REG_X1, &regs[1]); if (err != UC_ERR_OK) { return; }
 	err = uc_reg_read(uc, UC_ARM64_REG_X2, &regs[2]); if (err != UC_ERR_OK) { return; }
 	err = uc_reg_read(uc, UC_ARM64_REG_X3, &regs[3]); if (err != UC_ERR_OK) { return; }
 	err = uc_reg_read(uc, UC_ARM64_REG_X4, &regs[4]); if (err != UC_ERR_OK) { return; }
 	err = uc_reg_read(uc, UC_ARM64_REG_X5, &regs[5]); if (err != UC_ERR_OK) { return; }
-	err = uc_reg_read(uc, UC_ARM64_REG_X8, &regs[6]); if (err != UC_ERR_OK) { return; }
+	err = uc_reg_read(uc, UC_ARM64_REG_X6, &regs[6]); if (err != UC_ERR_OK) { return; }
+	err = uc_reg_read(uc, UC_ARM64_REG_X7, &regs[7]); if (err != UC_ERR_OK) { return; }
+	err = uc_reg_read(uc, UC_ARM64_REG_X8, &regs[8]); if (err != UC_ERR_OK) { return; }
 
-    uint64_t oregs[8];
+    void* n = (void*)&create_new_unicorn;
+    uint64_t oregs[9];
     asm volatile (
         "str x0, [%0, #0x00]""\n\t"
         "str x1, [%0, #0x08]""\n\t"
@@ -87,26 +122,37 @@ static void hook_intr(uc_engine *uc, uint32_t intno, void *user_data) {
         "str x4, [%0, #0x20]""\n\t"
         "str x5, [%0, #0x28]""\n\t"
         "str x6, [%0, #0x30]""\n\t"
-        "str x8, [%0, #0x38]""\n\t"
-        "mov x6, %1""\n\t"
-        "ldr x0, [x6, #0x00]""\n\t"
-        "ldr x1, [x6, #0x08]""\n\t"
-        "ldr x2, [x6, #0x10]""\n\t"
-        "ldr x3, [x6, #0x18]""\n\t"
-        "ldr x4, [x6, #0x20]""\n\t"
-        "ldr x5, [x6, #0x28]""\n\t"
-        "ldr x8, [x6, #0x30]""\n\t"
+        "str x7, [%0, #0x38]""\n\t"
+        "str x8, [%0, #0x40]""\n\t"
+        "ldr x0, [%1, #0x00]""\n\t"
+        "ldr x1, [%1, #0x08]""\n\t"
+        "ldr x2, [%1, #0x10]""\n\t"
+        "ldr x3, [%1, #0x18]""\n\t"
+        "ldr x4, [%1, #0x20]""\n\t"
+        "ldr x5, [%1, #0x28]""\n\t"
+        "ldr x6, [%1, #0x30]""\n\t"
+        "ldr x7, [%1, #0x38]""\n\t"
+        "ldr x8, [%1, #0x40]""\n\t"
         "svc #0""\n\t"
-        "str x0, [x6, #0x00]""\n\t"
-        "ldr x0, [%2, #0x00]""\n\t"
-        "ldr x1, [%2, #0x08]""\n\t"
-        "ldr x2, [%2, #0x10]""\n\t"
-        "ldr x3, [%2, #0x18]""\n\t"
-        "ldr x4, [%2, #0x20]""\n\t"
-        "ldr x5, [%2, #0x28]""\n\t"
-        "ldr x6, [%2, #0x30]""\n\t"
-        "ldr x8, [%2, #0x38]""\n\t"
-        ::"r"(oregs),"r"(regs),"r"(oregs));
+        "cbnz x0, main_thread""\n\t"
+        "sub x0, x8, #0xdc""\n\t" 
+        "cbnz x0, main_thread""\n\t"
+        "mov x0, x5""\n\t"
+        "mov x1, x6""\n\t"
+        "mov x2, %2""\n\t"
+        "b create_new_unicorn""\n\t"
+        "main_thread:""\n\t"
+        "str x0, [%1, #0x00]""\n\t"
+        "ldr x0, [%0, #0x00]""\n\t"
+        "ldr x1, [%0, #0x08]""\n\t"
+        "ldr x2, [%0, #0x10]""\n\t"
+        "ldr x3, [%0, #0x18]""\n\t"
+        "ldr x4, [%0, #0x20]""\n\t"
+        "ldr x5, [%0, #0x28]""\n\t"
+        "ldr x6, [%0, #0x30]""\n\t"
+        "ldr x7, [%0, #0x38]""\n\t"
+        "ldr x8, [%0, #0x40]""\n\t"
+        ::"r"(oregs),"r"(regs), "r"(pc):"x0","x1","x2","x3","x4","x5","x6","x7","x8");
 	err = uc_reg_write(uc, UC_ARM64_REG_X0, &regs[0]); if (err != UC_ERR_OK) { return; }
 }
 
@@ -157,7 +203,7 @@ int openfile()
     FILE *fp = NULL;
     fp = fopen("test.txt", "w+");
     fprintf(fp, "ok!!!");
-    fputs("hello world!", fp);
+    fputs("hello world!\n", fp);
     fclose(fp);
     return 0;
 }
@@ -189,6 +235,7 @@ int newthread()
     printf("thread ok!\n");
     return 0;
 }
+
 
 // extern void run();
 // __asm__(
@@ -248,7 +295,7 @@ static void test_arm(void)
     uc_hook_add(uc, &trace1, UC_HOOK_BLOCK, (void *)hook_block, NULL, (uint64_t)openfile, (uint64_t)sum + 0xfff);
 
     // tracing one instruction at ADDRESS with customized callback
-    uc_hook_add(uc, &trace2, UC_HOOK_CODE, (void *)hook_code, NULL, 1, 0);
+    // uc_hook_add(uc, &trace2, UC_HOOK_CODE, (void *)hook_code, NULL, 1, 0);
 
     // tracing one intr with customized callback
     uc_hook_add(uc, &trace2, UC_HOOK_INTR, (void *)hook_intr, NULL, 1, 0);
