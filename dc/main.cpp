@@ -10,7 +10,7 @@ using namespace std;
 
 #define ARM_CODE "\x00\x37\x00\xa0\xe3\x03\x10\x42\xe0" // mov r0, #0x37; sub r1, r2, r3
 
-#define STACKSIZE 0x2000
+#define STACKSIZE 0x20000
 
 typedef struct {
     uint64_t l;
@@ -26,11 +26,12 @@ struct StackInfo
 
 static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *user_data);
 static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user_data);
+static void hook_intr(uc_engine *uc, uint32_t intno, void *user_data);
 
 extern "C" void create_new_unicorn(uint64_t x0, StackInfo* stackInfo, uint128_t* regs)
 {
     uc_engine *uc;
-    uc_hook trace1;
+    uc_hook trace1, trace2;
     int err = uc_open(UC_ARCH_ARM64, UC_MODE_ARM, &uc);
 
     for(int ri = UC_ARM64_REG_INVALID+1; ri < UC_ARM64_REG_ENDING; ri++)
@@ -39,15 +40,15 @@ extern "C" void create_new_unicorn(uint64_t x0, StackInfo* stackInfo, uint128_t*
         if (err != UC_ERR_OK) { printf("regs[ri] read error.", ri); exit(-1); }
     }
 
-    uint8_t *stack = (uint8_t*)malloc(stackInfo->size);
-    memcpy(stack, stackInfo->stackSt, stackInfo->size);
-    uint8_t* osp = (uint8_t*)regs[UC_ARM64_REG_SP].l;
-    void* st = stack + (osp - (uint8_t*)stackInfo->stackSt);
-    uc_reg_write(uc, UC_ARM64_REG_SP, &st);
-    uint8_t* olr = (uint8_t*)regs[UC_ARM64_REG_LR].l;
-    void* lr = stack + (olr - (uint8_t*)stackInfo->stackSt);
-    uc_reg_write(uc, UC_ARM64_REG_LR, &lr);
-    uc_reg_write(uc, UC_ARM64_REG_FP, &stack);
+    // uint8_t *stack = (uint8_t*)malloc(stackInfo->size);
+    // memcpy(stack, stackInfo->stackSt, stackInfo->size);
+    // uint8_t* osp = (uint8_t*)regs[UC_ARM64_REG_SP].l;
+    // void* st = stack + (osp - (uint8_t*)stackInfo->stackSt);
+    // uc_reg_write(uc, UC_ARM64_REG_SP, &st);
+    // uint8_t* olr = (uint8_t*)regs[UC_ARM64_REG_LR].l;
+    // void* lr = stack + (olr - (uint8_t*)stackInfo->stackSt);
+    // uc_reg_write(uc, UC_ARM64_REG_LR, &lr);
+    // uc_reg_write(uc, UC_ARM64_REG_FP, &stack);
     
     uint64_t tpidr_el0=0, cpacr_el1=0;
     asm("mrs  x18, tpidr_el0\n\tstr x18, %0"::"m"(tpidr_el0):);
@@ -63,6 +64,13 @@ extern "C" void create_new_unicorn(uint64_t x0, StackInfo* stackInfo, uint128_t*
     // tracing all basic blocks with customized callback
     uc_hook_add(uc, &trace1, UC_HOOK_BLOCK, (void *)hook_block, NULL, (uint64_t)0, (uint64_t)-1);
     
+    // tracing one instruction at ADDRESS with customized callback
+    uc_hook_add(uc, &trace2, UC_HOOK_CODE, (void *)hook_code, NULL, 1, 0);
+
+    // StackInfo sStackInfo{.stackSt = stack, .size = STACKSIZE};
+    // tracing one intr with customized callback
+    // uc_hook_add(uc, &trace2, UC_HOOK_INTR, (void *)hook_intr, (void*)&sStackInfo, 1, 0);
+    
     uint64_t pc = regs[UC_ARM64_REG_PC].l;
     // (CPUARMState*)(uc->cpu->env_ptr)->pc = pc;
     err = uc_emu_start(uc, pc, -1, 0, 0);
@@ -71,7 +79,7 @@ extern "C" void create_new_unicorn(uint64_t x0, StackInfo* stackInfo, uint128_t*
         printf("Failed on uc_emu_start() with error returned: %u\n", err);
     }
     free(regs);
-    free(stack);
+    // free(stack);
     err = uc_errno(uc);
     printf("uc_errno: %d err:\n", err);
     uc_close(uc);
@@ -154,7 +162,15 @@ static void hook_intr(uc_engine *uc, uint32_t intno, void *user_data) {
 	err = uc_reg_read(uc, UC_ARM64_REG_X7, &regs[7]); if (err != UC_ERR_OK) { return; }
 	err = uc_reg_read(uc, UC_ARM64_REG_X8, &regs[8]); if (err != UC_ERR_OK) { return; }
 
-    void* allRegs = getAllRegister(uc);
+    uint128_t* allRegs = NULL;
+    // new thread -> clone
+    if (regs[8] == 0xdc)
+    {
+        allRegs = (uint128_t*)getAllRegister(uc);
+        allRegs[UC_ARM64_REG_SP].l = regs[1];
+        void* threadStack = malloc(STACKSIZE);
+        regs[1] = (uint64_t)threadStack;
+    }
 
     void* n = (void*)&create_new_unicorn;
     uint64_t oregs[9];
@@ -198,6 +214,10 @@ static void hook_intr(uc_engine *uc, uint32_t intno, void *user_data) {
         "ldr x8, [%0, #0x40]""\n\t"
         ::"r"(oregs),"r"(regs), "r"(user_data), "r"(allRegs):"x0","x1","x2","x3","x4","x5","x6","x7","x8");
 	err = uc_reg_write(uc, UC_ARM64_REG_X0, &regs[0]); if (err != UC_ERR_OK) { return; }
+    if(regs[8] == 0xdc)
+    {
+        // while(1) sleep(100);
+    }
 }
 /*
 
@@ -269,7 +289,7 @@ int newthread()
 {
     pthread_t thread;
     char* threadstr = "thead1";
-    int err = pthread_create(&thread, NULL, (void *(*)(void *))&print_message_function, threadstr);
+    int err = pthread_create(&thread, NULL, (void *(*)(void *))print_message_function, threadstr);
     if(err != 0)
     {
         printf("create thread error %d\n", err);
