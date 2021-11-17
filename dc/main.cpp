@@ -4,19 +4,51 @@
 #include <cmath>
 #include <pthread.h>
 #include <errno.h>
+#include <stdint.h>  
 
 using namespace std;
 
 #define ARM_CODE "\x00\x37\x00\xa0\xe3\x03\x10\x42\xe0" // mov r0, #0x37; sub r1, r2, r3
 
-extern "C" void create_new_unicorn(register uint64_t fn, register uint64_t arg, register uint64_t pc)
+#define STACKSIZE 0x2000
+
+typedef struct {
+    uint64_t l;
+    uint64_t h;
+}uint128_t;
+
+struct StackInfo
+{
+    void* stackSt;
+    uint64_t size;
+};
+
+
+static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *user_data);
+static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user_data);
+
+extern "C" void create_new_unicorn(uint64_t x0, StackInfo* stackInfo, uint128_t* regs)
 {
     uc_engine *uc;
+    uc_hook trace1;
     int err = uc_open(UC_ARCH_ARM64, UC_MODE_ARM, &uc);
 
-    int8_t *stack = (int8_t*)malloc(0x2000);
-    void *st = ((uint64_t *)&stack[0x2000]) - 1;
+    for(int ri = UC_ARM64_REG_INVALID+1; ri < UC_ARM64_REG_ENDING; ri++)
+    {
+        err = uc_reg_write(uc, ri, regs+ri);
+        if (err != UC_ERR_OK) { printf("regs[ri] read error.", ri); exit(-1); }
+    }
+
+    uint8_t *stack = (uint8_t*)malloc(stackInfo->size);
+    memcpy(stack, stackInfo->stackSt, stackInfo->size);
+    uint8_t* osp = (uint8_t*)regs[UC_ARM64_REG_SP].l;
+    void* st = stack + (osp - (uint8_t*)stackInfo->stackSt);
     uc_reg_write(uc, UC_ARM64_REG_SP, &st);
+    uint8_t* olr = (uint8_t*)regs[UC_ARM64_REG_LR].l;
+    void* lr = stack + (olr - (uint8_t*)stackInfo->stackSt);
+    uc_reg_write(uc, UC_ARM64_REG_LR, &lr);
+    uc_reg_write(uc, UC_ARM64_REG_FP, &stack);
+    
     uint64_t tpidr_el0=0, cpacr_el1=0;
     asm("mrs  x18, tpidr_el0\n\tstr x18, %0"::"m"(tpidr_el0):);
     uc_reg_write(uc, UC_ARM64_REG_TPIDR_EL0, &tpidr_el0);
@@ -26,16 +58,23 @@ extern "C" void create_new_unicorn(register uint64_t fn, register uint64_t arg, 
     cpacr_el1 = (cpacr_el1 & ~CPACR_FPEN_MASK) | CPACR_FPEN_TRAP_NONE;
     uc_reg_write(uc, UC_ARM64_REG_CPACR_EL1, &cpacr_el1);
 
-    uc_reg_write(uc, UC_ARM64_REG_X0, &fn);
-    uc_reg_write(uc, UC_ARM64_REG_X1, &arg);
-
-    err = uc_emu_start(uc, pc+32, -1, 0, 0);
+    uc_reg_write(uc, UC_ARM64_REG_X0, &x0);
+    
+    // tracing all basic blocks with customized callback
+    uc_hook_add(uc, &trace1, UC_HOOK_BLOCK, (void *)hook_block, NULL, (uint64_t)0, (uint64_t)-1);
+    
+    uint64_t pc = regs[UC_ARM64_REG_PC].l;
+    // (CPUARMState*)(uc->cpu->env_ptr)->pc = pc;
+    err = uc_emu_start(uc, pc, -1, 0, 0);
     if (err)
     {
         printf("Failed on uc_emu_start() with error returned: %u\n", err);
     }
+    free(regs);
+    free(stack);
     err = uc_errno(uc);
     printf("uc_errno: %d err:\n", err);
+    uc_close(uc);
     char* ret = "ok";
     pthread_exit((void*)ret);
 }
@@ -78,15 +117,17 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
     printf("\n");
 }
 
-struct SvcCall
+extern "C" void* getAllRegister(uc_engine *uc)
 {
-	uint32_t b1 : 1;				// 1
-	uint32_t b2 : 1;				// 0
-	uint32_t b3 : 3;				// 0 0 0
-	uint32_t svcNumber : 16;		//
-	uint32_t b4 : 3;				// 0 0 0
-	uint32_t b5 : 8;				// 0 0 1 0 1 0 1 1
-};
+    uc_err err;
+    uint128_t* regs = (uint128_t*)malloc(UC_ARM64_REG_ENDING*sizeof(uint128_t));
+    for(int ri = UC_ARM64_REG_INVALID+1; ri < UC_ARM64_REG_ENDING; ri++)
+    {
+        err = uc_reg_read(uc, ri, regs+ri);
+        if (err != UC_ERR_OK) { printf("regs[ri] read error.", ri); exit(-1); }
+    }
+    return regs;
+}
 
 static void hook_intr(uc_engine *uc, uint32_t intno, void *user_data) {
     printf(">>> Tracing intr %x\n", intno);
@@ -113,6 +154,8 @@ static void hook_intr(uc_engine *uc, uint32_t intno, void *user_data) {
 	err = uc_reg_read(uc, UC_ARM64_REG_X7, &regs[7]); if (err != UC_ERR_OK) { return; }
 	err = uc_reg_read(uc, UC_ARM64_REG_X8, &regs[8]); if (err != UC_ERR_OK) { return; }
 
+    void* allRegs = getAllRegister(uc);
+
     void* n = (void*)&create_new_unicorn;
     uint64_t oregs[9];
     asm volatile (
@@ -137,11 +180,11 @@ static void hook_intr(uc_engine *uc, uint32_t intno, void *user_data) {
         "svc #0""\n\t"
         "str x0, [%1, #0x00]""\n\t"
         "cbnz x0, not_should_jmp""\n\t"
-        "sub x0, x8, #0xdc""\n\t" 
-        "cbnz x0, not_should_jmp""\n\t"
-        "mov x0, x5""\n\t"
-        "mov x1, x6""\n\t"
-        "mov x2, %2""\n\t"
+        "cmp x8, #0xdc""\n\t" 
+        "bne not_should_jmp""\n\t"
+        "mov x2, %3""\n\t"
+        "mov x1, %2""\n\t"
+        "mov x0, #0""\n\t"
         "b create_new_unicorn""\n\t"
         "not_should_jmp:""\n\t"
         "ldr x0, [%0, #0x00]""\n\t"
@@ -153,10 +196,16 @@ static void hook_intr(uc_engine *uc, uint32_t intno, void *user_data) {
         "ldr x6, [%0, #0x30]""\n\t"
         "ldr x7, [%0, #0x38]""\n\t"
         "ldr x8, [%0, #0x40]""\n\t"
-        ::"r"(oregs),"r"(regs), "r"(pc):"x0","x1","x2","x3","x4","x5","x6","x7","x8");
+        ::"r"(oregs),"r"(regs), "r"(user_data), "r"(allRegs):"x0","x1","x2","x3","x4","x5","x6","x7","x8");
 	err = uc_reg_write(uc, UC_ARM64_REG_X0, &regs[0]); if (err != UC_ERR_OK) { return; }
 }
+/*
 
+        "mov x0, sp""\n\t"
+        "sub x0, x0, #0x10""\n\t"
+        "lsr x0, x0, #0x4""\n\t"
+        "lsl x0, x0, #0x4""\n\t"
+*/
 int arr[2] = {0, 0};
 int add(int a, int b)
 {
@@ -265,7 +314,7 @@ static void test_arm(void)
     int64_t r1 = 0x2222; // R1 register
     int64_t r2 = 0x1111; // R1 register
     int64_t r3 = 0x3333; // R2 register
-    int8_t *stack = (int8_t*)malloc(0x2000);
+    int8_t *stack = (int8_t*)malloc(STACKSIZE);
     printf("Emulate ARM code\n");
 
     // Initialize emulator in ARM mode
@@ -285,7 +334,7 @@ static void test_arm(void)
     uc_reg_read(uc, UC_ARM64_REG_CPACR_EL1, &cpacr_el1);
     cpacr_el1 = (cpacr_el1 & ~CPACR_FPEN_MASK) | CPACR_FPEN_TRAP_NONE;
     uc_reg_write(uc, UC_ARM64_REG_CPACR_EL1, &cpacr_el1);
-    void *st = ((uint64_t *)&stack[0x2000]) - 1;
+    void *st = ((uint64_t *)&stack[STACKSIZE]);
     printf("stack: %p\n", st);
     uc_reg_write(uc, UC_ARM64_REG_SP, &st);
 
@@ -298,8 +347,10 @@ static void test_arm(void)
     // tracing one instruction at ADDRESS with customized callback
     // uc_hook_add(uc, &trace2, UC_HOOK_CODE, (void *)hook_code, NULL, 1, 0);
 
+
+    StackInfo stackInfo{.stackSt = stack, .size = STACKSIZE};
     // tracing one intr with customized callback
-    uc_hook_add(uc, &trace2, UC_HOOK_INTR, (void *)hook_intr, NULL, 1, 0);
+    uc_hook_add(uc, &trace2, UC_HOOK_INTR, (void *)hook_intr, (void*)&stackInfo, 1, 0);
 
     // emulate machine code in infinite time (last param = 0), or when
     // finishing all the code.
@@ -308,6 +359,7 @@ static void test_arm(void)
     {
         printf("Failed on uc_emu_start() with error returned: %u\n", err);
     }
+    free(stack);
     err = uc_errno(uc);
     printf("uc_errno: %d err: %s\n",err, uc_strerror(err));;
 
