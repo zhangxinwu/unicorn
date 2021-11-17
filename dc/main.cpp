@@ -169,7 +169,7 @@ static void hook_intr(uc_engine *uc, uint32_t intno, void *user_data) {
         allRegs = (uint128_t*)getAllRegister(uc);
         allRegs[UC_ARM64_REG_SP].l = regs[1];
         void* threadStack = malloc(STACKSIZE);
-        regs[1] = (uint64_t)threadStack;
+        regs[1] =  (uint64_t)threadStack + STACKSIZE;
     }
 
     void* n = (void*)&create_new_unicorn;
