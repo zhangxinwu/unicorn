@@ -242,12 +242,12 @@ static int cpu_gen_code(CPUArchState *env, TranslationBlock *tb, int *gen_code_s
     if (gen_code_size == -1) {
         return -1;
     }
-    printf(">>> code size = %u: ", gen_code_size);
-    int i;
-    for (i = 0; i < gen_code_size; i++) {
-       printf(" %02x", gen_code_buf[i]);
-    }
-    printf("\n");
+    // printf(">>> code size = %u: ", gen_code_size);
+    // int i;
+    // for (i = 0; i < gen_code_size; i++) {
+    //    printf(" %02x", gen_code_buf[i]);
+    // }
+    // printf("\n");
     *gen_code_size_ptr = gen_code_size;
 #ifdef CONFIG_PROFILER
     s->code_time += profile_getclock();
