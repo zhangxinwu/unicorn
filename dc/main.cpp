@@ -45,16 +45,6 @@ extern "C" void create_new_unicorn(uint64_t x0, StackInfo* stackInfo, uint128_t*
         err = uc_reg_write(uc, ri, regs+ri);
         if (err != UC_ERR_OK) { printf("regs[ri] read error.", ri); exit(-1); }
     }
-
-    uint8_t *stack = (uint8_t*)malloc(stackInfo->size);
-    memcpy(stack, stackInfo->stackSt, stackInfo->size);
-    uint8_t* osp = (uint8_t*)regs[UC_ARM64_REG_SP].l;
-    void* st = stack + (osp - (uint8_t*)stackInfo->stackSt);
-    uc_reg_write(uc, UC_ARM64_REG_SP, &st);
-    uint8_t* olr = (uint8_t*)regs[UC_ARM64_REG_LR].l;
-    void* lr = stack + (olr - (uint8_t*)stackInfo->stackSt);
-    uc_reg_write(uc, UC_ARM64_REG_LR, &lr);
-    uc_reg_write(uc, UC_ARM64_REG_FP, &stack);
     
     uint64_t tpidr_el0=0, cpacr_el1=0;
     asm("mrs  x18, tpidr_el0\n\tstr x18, %0"::"m"(tpidr_el0):);
@@ -71,11 +61,9 @@ extern "C" void create_new_unicorn(uint64_t x0, StackInfo* stackInfo, uint128_t*
     uc_hook_add(uc, &trace1, UC_HOOK_BLOCK, (void *)hook_block, NULL, (uint64_t)0, (uint64_t)-1);
     
     // tracing one instruction at ADDRESS with customized callback
-    uc_hook_add(uc, &trace2, UC_HOOK_CODE, (void *)hook_code, NULL, 1, 0);
+    // uc_hook_add(uc, &trace2, UC_HOOK_CODE, (void *)hook_code, NULL, 1, 0);
 
-    // StackInfo sStackInfo{.stackSt = stack, .size = STACKSIZE};
-    // tracing one intr with customized callback
-    // uc_hook_add(uc, &trace2, UC_HOOK_INTR, (void *)hook_intr, (void*)&sStackInfo, 1, 0);
+    uc_hook_add(uc, &trace2, UC_HOOK_INTR, (void *)hook_intr, NULL, 1, 0);
     
     uint64_t pc = regs[UC_ARM64_REG_PC].l;
     // (CPUARMState*)(uc->cpu->env_ptr)->pc = pc;
@@ -85,7 +73,7 @@ extern "C" void create_new_unicorn(uint64_t x0, StackInfo* stackInfo, uint128_t*
         printf("Failed on uc_emu_start() with error returned: %u\n", err);
     }
     free(regs);
-    free(stack);
+    // free(stack);
     err = uc_errno(uc);
     printf("uc_errno: %d err:\n", err);
     int64_t ret;
@@ -99,97 +87,9 @@ extern "C" void create_new_unicorn(uint64_t x0, StackInfo* stackInfo, uint128_t*
     );
 }
 
-extern "C" void* create_thread(void* thread)
-{
-    uc_engine *uc;
-    uc_err err;
-    stPthreadFunc* pthreadfunc = (stPthreadFunc*)thread;
-    // Initialize emulator in ARM mode
-    err = uc_open(UC_ARCH_ARM64, UC_MODE_ARM, &uc);
-    if (err)
-    {
-        printf("Failed on uc_open() with error returned: %u (%s)\n",
-               err, uc_strerror(err));
-        return NULL;
-    }
-    int64_t x0 = (int64_t)pthreadfunc->arg; // X0 register
-    int8_t *stack = (int8_t*)malloc(STACKSIZE);
-    uc_reg_write(uc, UC_ARM64_REG_X0, &x0);
-    
-    uint64_t tpidr_el0=0;
-    asm("mrs  x18, tpidr_el0\n\tstr x18, %0"::"m"(tpidr_el0):);
-    uc_reg_write(uc, UC_ARM64_REG_TPIDR_EL0, &tpidr_el0);
-    uint64_t CPACR_FPEN_MASK = (0x3 << 20);
-    uint64_t CPACR_FPEN_TRAP_NONE = (0x3 << 20);
-    uint64_t cpacr_el1 = 0;
-    uc_reg_read(uc, UC_ARM64_REG_CPACR_EL1, &cpacr_el1);
-    cpacr_el1 = (cpacr_el1 & ~CPACR_FPEN_MASK) | CPACR_FPEN_TRAP_NONE;
-    uc_reg_write(uc, UC_ARM64_REG_CPACR_EL1, &cpacr_el1);
-    void *st = ((uint64_t *)&stack[STACKSIZE]);
-    uc_reg_write(uc, UC_ARM64_REG_SP, &st);
-    int64_t lr = -1;
-    uc_reg_write(uc, UC_ARM64_REG_LR, &lr);
-
-    uc_hook trace1, trace2, trace3;
-    // tracing all basic blocks with customized callback
-    uc_hook_add(uc, &trace1, UC_HOOK_BLOCK, (void *)hook_block, NULL, (uint64_t)0, (uint64_t)-1);
-    // tracing one instruction at ADDRESS with customized callback
-    uc_hook_add(uc, &trace2, UC_HOOK_CODE, (void *)hook_code, NULL, 1, 0);
-    // StackInfo stackInfo{.stackSt = stack, .size = STACKSIZE};
-    // tracing one intr with customized callback
-    uc_hook_add(uc, &trace3, UC_HOOK_INTR, (void *)hook_intr, NULL, 1, 0);
-
-    // emulate machine code in infinite time (last param = 0), or when
-    // finishing all the code.
-    err = uc_emu_start(uc, (uint64_t)pthreadfunc->func, -1, 0, 0);
-    if (err)
-    {
-        printf("Failed on uc_emu_start() with error returned: %u\n", err);
-    }
-    free(stack);
-    err = uc_errno(uc);
-    printf("uc_errno: %d err: %s\n",err, uc_strerror(err));;
-    printf(">>> Emulation done. Below is the CPU context\n");
-    uc_reg_read(uc, UC_ARM64_REG_X0, &x0);
-    printf(">>> R0 = %p\n", x0);
-    uc_close(uc);
-    return (void*)x0;
-}
-
-extern "C" int hook_pthread_create(pthread_t* thread_out, pthread_attr_t const* attr, void* (*start_routine)(void*), void* arg)
-{
-    stPthreadFunc* pthreadFunc = (stPthreadFunc*)malloc(sizeof(stPthreadFunc));
-    pthreadFunc->func = (void*)start_routine;
-    pthreadFunc->arg = arg;
-    return pthread_create(thread_out, attr, create_thread, pthreadFunc);
-}
-
-/*arm
-.text:00064590 0C D0 4D E2                 SUB             SP, SP, #0xC
-.text:00064594 08 00 8D E5                 STR             R0, [SP,#0xC+var_4]
-.text:00064598 04 10 8D E5                 STR             R1, [SP,#0xC+var_8]
-.text:0006459C 00 20 8D E5                 STR             R2, [SP,#0xC+var_C]
-.text:000645A0 11 01 01 E3                 MOVW            R0, #0x1111
-.text:000645A4 0C D0 8D E2                 ADD             SP, SP, #0xC
-.text:000645A8 1E FF 2F E1                 BX              LR
-*/
-/*arm64
-FF 43 00 D1 SUB             SP, SP, #0x10
-E0 0F 00 B9 STR             W0, [SP,#0x10+var_4]
-E1 0B 00 B9 STR             W1, [SP,#0x10+var_8]
-E8 0F 40 B9 LDR             W8, [SP,#0x10+var_4]
-E9 0B 40 B9 LDR             W9, [SP,#0x10+var_8]
-00 01 09 0B ADD             W0, W8, W9
-FF 43 00 91 ADD             SP, SP, #0x10
-C0 03 5F D6 RET
-*/
-// \xFF\x43\x00\xD1\xE0\x0F\x00\xB9\xE1\x0B\x00\xB9\xE8\x0F\x40\xB9\xE9\x0B\x40\xB9\x00\x01\x09\x0B\xFF\x43\x00\x91
-#define ARM_SUM "\xFF\x43\x00\xD1\xE0\x0F\x00\xB9\xE1\x0B\x00\xB9\xE8\x0F\x40\xB9\xE9\x0B\x40\xB9\x00\x01\x09\x0B\xFF\x43\x00\x91\xC0\x03\x5F\xD6"
-// #define ARM_SUM "\xFF\x43\x00\xD1\x08\x00\x8D\xE5\xE1\x0B\x00\xB9\xE8\x0F\x40\xB9"
-
 static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *user_data)
 {
-    // printf(">>> Tracing basic block at %p, block size = 0x%x\n", address, size);
+    
 }
 
 static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user_data)
@@ -198,67 +98,11 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
     for (int i = 0 ; i < size; i++)
         printf("%02x ", ((uint8_t *)address)[i]);
     printf("\n");
-    
-    if(address == (uint64_t)pthread_create)
-    {
-        printf("pthread_create !!! %p\n", address);
-        uint64_t x0, x1, x2, x3, lr;
-        uc_reg_read(uc, UC_ARM64_REG_X0, &x0);
-        uc_reg_read(uc, UC_ARM64_REG_X1, &x1);
-        uc_reg_read(uc, UC_ARM64_REG_X2, &x2);
-        uc_reg_read(uc, UC_ARM64_REG_X3, &x3);
-        uc_reg_read(uc, UC_ARM64_REG_LR, &lr);
-        x0 = hook_pthread_create((pthread_t*)x0, (pthread_attr_t*)x1, (void *(*)(void *))x2, (void*)x3);
-        uc_reg_write(uc, UC_ARM64_REG_X0, &x0);
-        uc_reg_write(uc, UC_ARM64_REG_PC, &lr);
-        return;
-    }
-    if(address == (uint64_t)printf)
-    {
-        uint64_t r0;
-        uc_reg_read(uc, UC_ARM64_REG_X0, &r0);
-        printf("printf %s\n", (char*)r0);
-        uint64_t lr;
-        uc_reg_read(uc, UC_ARM64_REG_LR, &lr);
-        printf("lr %p\n", lr);
-        uint64_t pc = lr+4;
-        uc_reg_write(uc, UC_ARM64_REG_PC, &pc);
-        return;
-    }
 }
 
 void hook_mem(uc_engine *uc, uc_mem_type type,
         uint64_t address, int size, int64_t value, void *user_data)
 {
-    if(type == UC_MEM_FETCH) {
-        if(address == (uint64_t)pthread_create)
-        {
-            printf("pthread_create !!! %p\n", address);
-            uint64_t x0, x1, x2, x3, lr;
-            uc_reg_read(uc, UC_ARM64_REG_X0, &x0);
-            uc_reg_read(uc, UC_ARM64_REG_X1, &x1);
-            uc_reg_read(uc, UC_ARM64_REG_X2, &x2);
-            uc_reg_read(uc, UC_ARM64_REG_X3, &x3);
-            uc_reg_read(uc, UC_ARM64_REG_LR, &lr);
-            x0 = hook_pthread_create((pthread_t*)x0, (pthread_attr_t*)x1, (void *(*)(void *))x2, (void*)x3);
-            uc_reg_write(uc, UC_ARM64_REG_X0, &x0);
-            uc_reg_write(uc, UC_ARM64_REG_PC, &lr);
-            return;
-        }
-        if(address == (uint64_t)printf)
-        {
-            uint64_t r0;
-            uc_reg_read(uc, UC_ARM64_REG_X0, &r0);
-            printf("printf %s\n", (char*)r0);
-            uint64_t lr, sp;
-            uc_reg_read(uc, UC_ARM64_REG_LR, &lr);
-            uc_reg_read(uc, UC_ARM64_REG_SP, &sp);
-            // sp += 0x160;
-            uc_reg_write(uc, UC_ARM64_REG_PC, &lr);
-            uc_reg_write(uc, UC_ARM64_REG_SP, &sp);
-            return;
-        }
-    }
 }
 
 
@@ -275,12 +119,12 @@ extern "C" void* getAllRegister(uc_engine *uc)
 }
 
 static void hook_intr(uc_engine *uc, uint32_t intno, void *user_data) {
-    printf(">>> Tracing intr %x\n", intno);
+    // printf(">>> Tracing intr %x\n", intno);
     uint8_t inst[4];
     uint8_t* pc;
     uc_reg_read(uc, UC_ARM64_REG_PC, &pc);
 
-    printf(">>> Tracing intr->pc %x %x %x %x\n", pc[0], pc[1], pc[2], pc[3]);
+    // printf(">>> Tracing intr->pc %x %x %x %x\n", pc[0], pc[1], pc[2], pc[3]);
     
     uc_err err;
 	// Just grab a bunch of registers here so we don't have to make a bunch of calls
@@ -304,12 +148,12 @@ static void hook_intr(uc_engine *uc, uint32_t intno, void *user_data) {
     if (regs[8] == 0xdc)
     {
         allRegs = (uint128_t*)getAllRegister(uc);
-        // allRegs[UC_ARM64_REG_SP].l = regs[1];
-        // void* threadStack = malloc(STACKSIZE);
-        // regs[1] =  (uint64_t)threadStack + STACKSIZE;
+        allRegs[UC_ARM64_REG_SP].l = regs[1];
+        void* threadStack = malloc(STACKSIZE);
+        regs[1] =  (uint64_t)threadStack + STACKSIZE-0x100;
+        memcpy((void*)((uint64_t)threadStack + STACKSIZE - 0x100), (void*)allRegs[UC_ARM64_REG_SP].l, 0x100);
     }
 
-    void* n = (void*)&create_new_unicorn;
     uint64_t oregs[9];
     asm volatile (
         "str x0, [%0, #0x00]""\n\t"
@@ -505,7 +349,7 @@ static void test_arm(void)
     uc_hook_add(uc, &trace1, UC_HOOK_BLOCK, (void *)hook_block, NULL, (uint64_t)openfile, (uint64_t)sum + 0xfff);
 
     // tracing one instruction at ADDRESS with customized callback
-    uc_hook_add(uc, &trace2, UC_HOOK_CODE, (void *)hook_code, NULL, -1, 0);
+    // uc_hook_add(uc, &trace2, UC_HOOK_CODE, (void *)hook_code, NULL, (uint64_t)printf, ((uint64_t)printf)+1);
 
 
     StackInfo stackInfo{.stackSt = stack, .size = STACKSIZE};
