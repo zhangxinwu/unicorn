@@ -159,7 +159,7 @@ AR ?= ar
 RANLIB ?= ranlib
 STRIP ?= strip
 else
-CC = aarch64-linux-android31-clang
+CC = armv7a-linux-androideabi31-clang
 AR = llvm-ar
 RANLIB = llvm-ranlib
 STRIP = llvm-strip

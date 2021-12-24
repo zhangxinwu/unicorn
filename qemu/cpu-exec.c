@@ -381,7 +381,12 @@ static TranslationBlock *tb_find_slow(CPUArchState *env, target_ulong pc,
     /* find translated block using physical mappings */
     // phys_pc = get_page_addr_code(env, pc);  // qq
     phys_pc = pc;
-    if (phys_pc == -1) { // invalid code?
+    // invalid code?
+    if (phys_pc == -1 || phys_pc == -2 || 
+        (cpu->uc->arch == UC_ARCH_ARM && 
+            (phys_pc == (uint32_t)-2 || phys_pc == (uint32_t)-1)
+        )
+    ) { 
         return NULL;
     }
     phys_page1 = phys_pc & TARGET_PAGE_MASK;

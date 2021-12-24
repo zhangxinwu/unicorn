@@ -1,41 +1,18 @@
-funcs = []
-with open("trace.txt") as f:
-    lines = f.readlines()
-    t = 0
-    for i in range(len(lines)):
-        sp = lines[i].split()
-        if sp[0]=='':
-            sp = sp[1:]
-        if len(sp) > 1 and sp[1].startswith('.'):
-            st = []
-            if '+' in sp[1]:
-                st = sp[1].split('+')
-            else:
-                st = sp[1].split(':')
-                if len(st) > 2:
-                    st = [':'.join(st[:-1]), st[-1]]
-                else:
-                    st = [sp[1]]
-                # print(st)
-            fc = st[0]
-            if len(funcs) == 0:
-                funcs.append((t, fc))
-            else:
-                ti, fi = funcs[-1]
-                if fi == fc:
-                    continue
-                else:
-                    cl = lines[i-1].split()[2]
-                    if 'call' in cl:
-                        t+=1
-                        funcs.append((t, fc))
-                    if 'ret' in cl:
-                        t-=1
-                        funcs.append((t, fc))
-                    if cl.startswith('j') and fc == fi:
-                        t = ti
-                        funcs.append(t,fc)
+from capstone import *
 
-for (ti, fi) in funcs:
-    print(' '*ti, fi)
-    pass
+md = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
+mdd = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
+with open("trace.log", "r") as f:
+    for line in f.readlines():
+        l = line.split()
+        addr = int(l[0], base=16)
+        code = b''
+        for i in l[1:]:
+            code += int(i, base=16).to_bytes(1, 'little')
+        if len(l) > 3:
+            for i in md.disasm(code, addr):
+                print("0x%x:\t%s\t%s" %(i.address, i.mnemonic, i.op_str))
+        else:
+            for i in mdd.disasm(code, addr):
+                print("0x%x:\t%s\t%s" %(i.address, i.mnemonic, i.op_str))
+        
